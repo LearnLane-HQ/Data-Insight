@@ -110,3 +110,39 @@ def peers_plot(df, name, metric):
                  title='<b>{} {} vs Peers FY22</b>'.format(name, metric))
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, yaxis_title='')
     return fig
+def esg_plot(name, df):
+    # Define colors for types
+    colors = {name: '#A27D4F', 'Peer Group': '#D9D9D9'}
+
+    # Creating the bar chart
+    fig = go.Figure()
+    for type in df['Type'].unique():
+        fig.add_trace(go.Bar(
+            x=df[df['Type'] == type]['variable'],
+            y=df[df['Type'] == type]['value'],
+            name=type,
+            text=df[df['Type'] == type]['value'],
+            textposition='outside',
+            marker_color=colors[type]
+        ))
+    fig.update_layout(
+        height=700,
+        width=1000,
+        barmode='group',
+        title="ESG Score vs Peers Average",
+        xaxis_title="",
+        yaxis_title="Score",
+        legend_title="Type",
+        xaxis=dict(tickangle=0),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)')
+    return fig
+
+
+def get_financials(df, col_name, metric_name):
+    """function to get financial metrics from a DataFrame. Takes DataFrame, column name and metric name as arguments and returns a DataFrame"""
+    metric = df.loc[:, ['asOfDate', col_name]]
+    metric_df = pd.DataFrame(metric).reset_index()
+    metric_df.columns = ['Symbol', 'Year', metric_name]
+
+    return metric_df
