@@ -330,3 +330,532 @@ st.sidebar.write('**Use filters to select prospects** 👇')
 dynamic_filters = DynamicFilters(df, filters=['Sector', 'Industry', 'Prospect Status', 'Product'])
 dynamic_filters.display_filters(location='sidebar')
 df_filtered = dynamic_filters.filter_df()
+
+
+with st.sidebar:
+    st.markdown('''The dataset is taken from [Kaggle](https://www.kaggle.com/datasets/aramacus/usa-public-companies) and slightly modified for the purpose of this app.
+    ''', unsafe_allow_html=True)
+    st.markdown('''[GitHub Repo](https://github.com/arsentievalex/instant-insight-web-app)''', unsafe_allow_html=True)
+    st.markdown('''The app created by [Oleksandr Arsentiev](https://twitter.com/alexarsentiev) for the purpose of
+    Streamlit Summit Hackathon''', unsafe_allow_html=True)
+
+##############################################################################################################
+
+st.title('Data Insight')
+
+with st.expander('What is this app about?'):
+    st.write('''
+    This app is designed to generate an instant company research.\n
+    In a matter of few clicks, a user gets a PowerPoint presentation with the company overview, SWOT analysis, financials, and value propostion tailored for the selling product. 
+    The app works with the US public companies.
+
+    Use Case Example:\n
+    Imagine working in sales for a B2B SaaS company that has hundreds of prospects and offers the following products: 
+    Accounting and Planning Software, CRM, Chatbot, and Cloud Data Storage.
+    You are tasked to do a basic prospect research and create presentations for your team. The prospects data is stored in a Snowflake database that feeds your CRM system.
+    You can use this app to quickly filter the prospects by sector, industry, prospect status, and product. 
+    Next, you can select the prospect you want to include in the presentation and click the button to generate the presentation.
+    And...that's it! You have the slides ready to be shared with your team.
+
+    Tech Stack:\n
+    • Database - Snowflake via Snowflake Connector\n
+    • Data Processing - Pandas\n
+    • Research Data - Yahoo Finance via Yahooquery, GPT 3.5 via LangChain\n
+    • Visualization - Plotly\n
+    • Frontend - Streamlit, AgGrid\n
+    • Presentation - Python-pptx\n
+    ''')
+
+num_of_cust = df_filtered.shape[0]
+st.metric(label='Number of Prospects', value=num_of_cust)
+
+# button to create slides
+ui_container = st.container()
+with ui_container:
+    submit = st.button(label='Generate Presentation')
+
+# select columns to show
+df_filtered = df_filtered[['Company Name', 'Sector', 'Industry', 'Prospect Status', 'Product']]
+
+# creating AgGrid dynamic table and setting configurations
+gb = GridOptionsBuilder.from_dataframe(df_filtered)
+gb.configure_selection(selection_mode="single", use_checkbox=True)
+gb.configure_column(field='Company Name', width=270)
+gb.configure_column(field='Sector', width=260)
+gb.configure_column(field='Industry', width=350)
+gb.configure_column(field='Prospect Status', width=270)
+gb.configure_column(field='Product', width=240)
+
+gridOptions = gb.build()
+
+response = AgGrid(
+    df_filtered,
+    gridOptions=gridOptions,
+    enable_enterprise_modules=False,
+    height=600,
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
+    data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+    fit_columns_on_grid_load=False,
+    theme='alpine',
+    allow_unsafe_jscode=True
+)
+
+# get selected rows
+response_df = pd.DataFrame(response["selected_rows"])
+
+# if user input is empty and button is clicked then show warning
+if submit and response_df.empty:
+    with ui_container:
+        st.warning("Please select a prospect!")
+
+elif submit and openai_key == "":
+    with ui_container:
+        st.warning("Please input your OpenAI API key")
+
+# if user input is not empty and button is clicked then generate slides
+elif submit and response_df is not None:
+    with ui_container:
+        with st.spinner('Generating awesome slides for you...⏳'):
+
+            try:
+                # define variables for selected prospect
+                company_name = response_df['Company Name'].values[0]
+                product = response_df['Product'].values[0]
+
+                # join df with response_df to get a ticker of selected prospect
+                df_ticker = pd.merge(df, response_df, left_on='Company Name', right_on='Company Name')
+                selected_ticker = df_ticker['Ticker'].values[0]
+
+                # open presentation template
+                pptx = path + '//' + 'template.pptx'
+                prs = Presentation(pptx)
+
+                ticker = Ticker(selected_ticker)
+
+                # get stock info
+                name = ticker.price[selected_ticker]['shortName']
+                sector = ticker.summary_profile[selected_ticker]['sector']
+                industry = ticker.summary_profile[selected_ticker]['industry']
+                employees = ticker.summary_profile[selected_ticker]['fullTimeEmployees']
+                country = ticker.summary_profile[selected_ticker]['country']
+                city = ticker.summary_profile[selected_ticker]['city']
+                website = ticker.summary_profile[selected_ticker]['website']
+                summary = ticker.summary_profile[selected_ticker]['longBusinessSummary']
+                logo_url = 'https://logo.clearbit.com/' + website
+
+                # declare pptx variables
+                title_slide = prs.slides[0]
+                summary_slide = prs.slides[1]
+                s_w_slide = prs.slides[2]
+                vp_slide = prs.slides[4]
+                key_people_slide = prs.slides[5]
+                comp_slide = prs.slides[6]
+                esg_slide = prs.slides[7]
+
+                # initiate a dictionary of placeholders and values to replace
+                replaces_1 = {
+                    '{company}': name,
+                    '{date}': today}
+
+                replaces_2 = {
+                    '{c}': name,
+                    '{s}': sector,
+                    '{i}': industry,
+                    '{co}': country,
+                    '{ci}': city,
+                    '{ee}': "{:,}".format(employees),
+                    '{w}': website,
+                    '{summary}': summary
+                }
+
+                # run the function to replace placeholders with values
+                replace_text(replaces_1, title_slide)
+                replace_text(replaces_2, summary_slide)
+
+                # check if a logo ulr returns code 200 (working link)
+                if requests.get(logo_url).status_code == 200:
+                    # create logo image object
+                    logo = resize_image(logo_url)
+                    logo.save('logo.png')
+                    logo_im = 'logo.png'
+
+                    # add logo to the slide
+                    add_image(prs.slides[1], image=logo_im, left=Inches(1.2), width=Inches(2), top=Inches(0.5))
+                    os.remove('logo.png')
+
+                ##############################################################################################################
+                # create slides with financial plots
+                # get financial data
+                fin_df = ticker.all_financial_data()
+
+                # plot stock price
+                stock_df = get_stock(ticker=ticker, period='5y', interval='1mo')
+                stock_fig = plot_graph(df=stock_df, x='Date', y='Open', title='Stock Price USD', name=name)
+
+                stock_fig.write_image("stock.png")
+                stock_im = 'stock.png'
+
+                add_image(prs.slides[3], image=stock_im, left=Inches(1.8), width=Inches(4.5), top=Inches(0.5))
+                os.remove('stock.png')
+
+                # plot revenue
+                rev_df = get_financials(df=fin_df, col_name='TotalRevenue', metric_name='Total Revenue')
+                rev_fig = plot_graph(df=rev_df, x='Year', y='Total Revenue', title='Total Revenue USD', name=name)
+
+                rev_fig.write_image("rev.png")
+                rev_im = 'rev.png'
+
+                add_image(prs.slides[3], image=rev_im, left=Inches(1.8), width=Inches(4.5), top=Inches(3.8))
+                os.remove('rev.png')
+
+                # plot market cap
+                debt_df = get_financials(df=fin_df, col_name='TotalDebt', metric_name='Total Debt')
+                debt_fig = plot_graph(df=debt_df, x='Year', y='Total Debt', title='Total Debt USD', name=name)
+
+                debt_fig.write_image("marketcap.png")
+                debt_im = 'marketcap.png'
+
+                add_image(prs.slides[3], image=debt_im, left=Inches(7.3), width=Inches(4.5), top=Inches(0.5))
+                os.remove('marketcap.png')
+
+                # plot ebitda
+                # adding try and except because some companies like banks don't have EBITDA data
+                try:
+                    ebitda_df = get_financials(df=fin_df, col_name='NormalizedEBITDA', metric_name='EBITDA')
+                    ebitda_fig = plot_graph(df=ebitda_df, x='Year', y='EBITDA', title='EBITDA USD', name=name)
+
+                    ebitda_fig.write_image("ebitda.png")
+                    ebitda_im = 'ebitda.png'
+
+                    add_image(prs.slides[3], image=ebitda_im, left=Inches(7.3), width=Inches(4.5), top=Inches(3.8))
+                    os.remove('ebitda.png')
+                except:
+                    pass
+
+                ############################################################################################################
+                
+                # create competitors slide
+                input_competitors = """What are the top competitors of {} company with ticker {}?
+                                    Provide up to 4 most relevant public US competitors comparable by revenue and market cap.
+                                    Return output as a Python dictionary with company name as key and ticker as value.
+                                    Do not return anything else."""
+
+                # format template with company name and ticker
+                input_competitors = input_competitors.format(name, selected_ticker)
+
+                # return response from GPT-3
+                gpt_comp_response = generate_gpt_response(gpt_input=input_competitors, max_tokens=250, api_key=openai_key, llm_model=llm_model)
+
+                # extract dictionary from response
+                peers_dict = dict_from_string(gpt_comp_response)
+
+                # check if any competitors were returned
+                if peers_dict is not None:
+
+                    # convert dict to nested dict to later hold financial data
+                    peers_dict_nested = convert_to_nested_dict(input_dict=peers_dict, nested_key='Ticker')
+
+                    # add current ticker to the list
+                    peers_dict_nested[name] = {'Ticker': selected_ticker}
+
+                    # extract financial data for each competitor
+                    for key, value in peers_dict_nested.items():
+                        try:
+                            extract_comp_financials(tkr=value['Ticker'], comp_name=key, dict=peers_dict_nested)
+                        # if ticker is not found, drop it from the peers dict and continue
+                        except:
+                            del peers_dict[key]
+                            continue
+
+                    # create a dataframe with peers financial data
+                    peers_df = pd.DataFrame.from_dict(peers_dict_nested, orient='index')
+                    peers_df = peers_df.reset_index().rename(columns={'index': 'Company Name'})
+
+                    # plot revenue vs peers graph
+                    sg_and_a_peers_fig = peers_plot(df=peers_df, name=name, metric='SG&A % Of Revenue')
+
+                    sg_and_a_peers_fig.write_image("sg_and_a_peers.png")
+                    sg_and_a_peers_im = 'sg_and_a_peers.png'
+
+                    add_image(prs.slides[6], image=sg_and_a_peers_im, left=Inches(0.8), width=Inches(4.8),
+                              top=Inches(0.5))
+                    os.remove('sg_and_a_peers.png')
+
+                    # plot operating expenses vs peers graph
+                    rev_peers_fig = peers_plot(df=peers_df, name=name, metric='Total Revenue')
+                    rev_peers_fig.write_image("rev_peers.png")
+                    rev_peers_im = 'rev_peers.png'
+
+                    add_image(prs.slides[6], image=rev_peers_im, left=Inches(0.8), width=Inches(4.8), top=Inches(3.8))
+                    os.remove('rev_peers.png')
+
+                    # get competitor company descriptions
+                    peers_summary_df = peers_summary(df=peers_df, selected_ticker=selected_ticker)
+
+                    # create a list of competitor descriptions and logos
+                    summary_list = peers_summary_df['Summary'].tolist()
+                    logo_list = peers_summary_df['Logo'].tolist()
+
+                    # if there are less than 4 competitors, add empty strings to the list
+                    if len(summary_list) < 4:
+                        summary_list += [''] * (4 - len(summary_list))
+
+                    # unpack list into variables
+                    c1, c2, c3, c4 = summary_list
+
+                    # initiate a dictionary of placeholders and values to replace
+                    replaces_5 = {
+                        '{a}': c1,
+                        '{b}': c2,
+                        '{c}': c3,
+                        '{d}': c4}
+
+                    # replace placeholders with values
+                    replace_text(replaces_5, comp_slide)
+
+                    top_row = Inches(0.7)
+
+                    for l in logo_list:
+                        # check if a logo ulr returns code 200 (working link)
+                        if requests.get(l).status_code == 200:
+                            # create logo image object
+                            logo = resize_image(l)
+                            logo.save('logo.png')
+                            logo_im = 'logo.png'
+
+                            # add logo to the slide
+                            add_image(comp_slide, image=logo_im, left=Inches(5.4), width=Inches(1.2), top=top_row)
+                            top_row += Inches(1.8)
+                            os.remove('logo.png')
+
+                ############################################################################################################
+
+                # create strengths and weaknesses slide
+
+                input_swot = f"""
+                Create a SWOT analysis of {name} company with ticker {selected_ticker}
+                Return output as a Python dictionary with the following keys: Strengths, Weaknesses, 
+                Opportunities, Threats. The values should be a brief description of each in string format.
+                Do not return anything else. Be concise and specific.
+                """
+                
+                # return response from GPT-3
+                gpt_swot = generate_gpt_response(gpt_input=input_swot, max_tokens=1000, api_key=openai_key, llm_model=llm_model)
+
+                # extract dictionary from response
+                swot_dict = dict_from_string(gpt_swot)
+
+                # create title for the slide
+                swot_title = 'SWOT Analysis of {}'.format(name)
+
+                # initiate a dictionary of placeholders and values to replace
+                replaces_3 = {
+                    '{s}': swot_dict['Strengths'],
+                    '{w}': swot_dict['Weaknesses'],
+                    '{o}': swot_dict['Opportunities'],
+                    '{t}': swot_dict['Threats'],
+                    '{swot_title}': swot_title}
+
+                # run the function to replace placeholders with values
+                replace_text(replaces_3, s_w_slide)
+
+                ############################################################################################
+                
+                # create value prop slide
+                input_vp = """"Create a brief value proposition using Value Proposition Canvas framework for {product} for 
+                {name} company with ticker {ticker} that operates in {industry} industry.
+                Return output as a Python dictionary with the following keys: Pains, Gains, Gain Creators, 
+                Pain Relievers as a keys and text as values. Be specific and concise. Do not return anything else."""
+
+                input_vp = input_vp.format(product=product, name=name, ticker=selected_ticker, industry=industry)
+
+                # return response from GPT-3
+                gpt_value_prop = generate_gpt_response(gpt_input=input_vp, max_tokens=1000, api_key=openai_key, llm_model=llm_model)
+
+                # extract dictionary from response
+                value_prop_dict = dict_from_string(gpt_value_prop)
+
+                vp_title = 'Value Proposition of {} for {}'.format(product, name)
+
+                # initiate a dictionary of placeholders and values to replace
+                replaces_4 = {
+                    '{p}': value_prop_dict['Pains'],
+                    '{g}': value_prop_dict['Gains'],
+                    '{gc}': value_prop_dict['Gain Creators'],
+                    '{pr}': value_prop_dict['Pain Relievers'],
+                    '{vp_title}': vp_title}
+
+                # run the function to replace placeholders with values
+                replace_text(replaces_4, vp_slide)
+
+                ############################################################################################
+
+                # key people slide
+                key_people = ticker.asset_profile[selected_ticker]['companyOfficers']
+
+                # create title, name and age lists from key_people
+                kp_titles = []
+                kp_names = []
+                kp_age = []
+
+                for i in range(4):
+                    try:
+                        kp_titles.append(key_people[i]['title'])
+                        kp_names.append(key_people[i]['name'])
+                        kp_age.append(key_people[i]['age'])
+                    except:
+                        kp_titles.append('')
+                        kp_names.append('')
+                        kp_age.append('')
+
+                replaces_6 = {
+                    '{t1}': kp_titles[0],
+                    '{t2}': kp_titles[1],
+                    '{t3}': kp_titles[2],
+                    '{t4}': kp_titles[3],
+                    '{n1}': kp_names[0],
+                    '{n2}': kp_names[1],
+                    '{n3}': kp_names[2],
+                    '{n4}': kp_names[3],
+                    '{a1}': kp_age[0],
+                    '{a2}': kp_age[1],
+                    '{a3}': kp_age[2],
+                    '{a4}': kp_age[3],
+                    '{company_name}': name}
+
+                # run the function to replace placeholders with values
+                replace_text(replaces_6, key_people_slide)
+
+                ############################################################################################
+            
+                # corporate news
+                news_df = ticker.corporate_events
+
+                # sort by date descending
+                news_df = news_df.sort_values(by=['date'], ascending=False)
+                # reset index
+                news_df.reset_index(inplace=True)
+
+                # keep only top three rows
+                news_df = news_df.head(3)
+
+                # clean description column
+                news_df['fixed_description'] = news_df['description'].apply(fix_text_capitalization).apply(
+                    replace_multiple_symbols).apply(shorten_summary)
+
+                # Remove the timestamp and keep only the date
+                news_df['date'] = news_df['date'].dt.date
+
+                # drop duplicates in headline columns
+                news_df.drop_duplicates(subset=['headline'], inplace=True)
+
+                # drop rows with empty headline
+                news_df.dropna(subset=['headline'], inplace=True)
+
+                # create title, name and age lists from key_people
+                news_headlines = []
+                news_dates = []
+                news_desc = []
+
+                for i in range(3):
+                    try:
+                        news_headlines.append(news_df['headline'][i])
+                        news_dates.append(news_df['date'][i])
+                        news_desc.append(news_df['fixed_description'][i])
+                    except:
+                        news_headlines.append('')
+                        news_dates.append('')
+                        news_desc.append('')
+
+                replaces_7 = {
+                    '{h1}': news_headlines[0],
+                    '{h2}': news_headlines[1],
+                    '{h3}': news_headlines[2],
+                    '{d1}': news_dates[0],
+                    '{d2}': news_dates[1],
+                    '{d3}': news_dates[2],
+                    '{desc1}': news_desc[0],
+                    '{desc2}': news_desc[1],
+                    '{desc3}': news_desc[2]}
+
+                # run the function to replace placeholders with values
+                replace_text(replaces_7, key_people_slide)
+
+                ############################################################################################
+            
+                # ESG slide
+                # get ESG scores from Yahoo Finance
+                try:
+                    esg_scores = ticker.esg_scores
+
+                    # get esg score data for the company
+                    total_esg = esg_scores[selected_ticker]['totalEsg']
+                    governance_score = esg_scores[selected_ticker]['governanceScore']
+                    environment_score = esg_scores[selected_ticker]['environmentScore']
+                    social_score = esg_scores[selected_ticker]['socialScore']
+
+                    # get peer group data
+                    peer_group = esg_scores[selected_ticker]['peerGroup']
+                    peers_total_esg_avg = esg_scores[selected_ticker]['peerEsgScorePerformance']['avg']
+                    peers_governance_avg = esg_scores[selected_ticker]['peerGovernancePerformance']['avg']
+                    peers_env_avg = esg_scores[selected_ticker]['peerEnvironmentPerformance']['avg']
+                    peers_social_avg = esg_scores[selected_ticker]['peerSocialPerformance']['avg']
+
+                    esg_dict = {'Type': [name, 'Peer Group'],
+                                'Total ESG Score': [round(total_esg, 2), round(peers_total_esg_avg, 2)],
+                                'Governance Score': [round(governance_score, 2), round(peers_governance_avg, 2)],
+                                'Environment Score': [round(environment_score, 2), round(peers_env_avg, 2)],
+                                'Social Score': [round(social_score, 2), round(peers_social_avg, 2)]}
+
+                    esg_df = pd.DataFrame(esg_dict)
+                    # Pivot DataFrame
+                    esg_df_melted = esg_df.melt(id_vars='Type',
+                                                value_vars=['Total ESG Score', 'Governance Score', 'Environment Score',
+                                                            'Social Score'])
+                    # run function to generate a bar chart with esg comparison
+                    esg_fig = esg_plot(name=name, df=esg_df_melted)
+
+                    esg_fig.write_image("esg.png")
+                    esg_im = 'esg.png'
+
+                    add_image(esg_slide, image=esg_im, left=Inches(3), width=Inches(7.7), top=Inches(1.6))
+                    os.remove('esg.png')
+
+                except Exception as e:
+                    # if the ESG data is not avaialble, return plot with a message (preferably the slide would be deleted, but there is no option for that in python-pptx)
+                    no_data_fig = no_data_plot()
+                    no_data_fig.write_image("no_data.png")
+                    no_data_im = 'no_data.png'
+
+                    add_image(esg_slide, image=no_data_im, left=Inches(3), width=Inches(7.7), top=Inches(1.6))
+                    os.remove('no_data.png')
+
+                # replace title with company name
+                replaces_8 = {'{company_name}': name}
+                # run the function to replace placeholders with values
+                replace_text(replaces_8, esg_slide)
+
+                ###########################################################################################
+            
+                # create file name
+                filename = '{} {}.pptx'.format(name, today)
+
+                # save presentation as binary output
+                binary_output = BytesIO()
+                prs.save(binary_output)
+
+                # display success message and download button
+                with ui_container:
+                    st.success('The slides have been generated! :tada:')
+
+                    st.download_button(label='Click to download PowerPoint',
+                                       data=binary_output.getvalue(),
+                                       file_name=filename)
+
+            # if there is any error, display an error message
+            except Exception as e:
+                with ui_container:
+                    st.write(e)
+                    # get more details on error
+                    st.write(traceback.format_exc())
+                    st.error("Oops, something went wrong, please try again or select a different prospect.")
