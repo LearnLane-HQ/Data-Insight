@@ -69,3 +69,44 @@ def replace_text(replacements, slide):
                                 p.remove(run._r)
                         if bool(paragraph.runs):
                             paragraph.runs[0].text = whole_text
+
+def get_stock(ticker, period, interval):
+    """function to get stock data from Yahoo Finance. Takes ticker, period and interval as arguments and returns a DataFrame"""
+    hist = ticker.history(period=period, interval=interval)
+    hist = hist.reset_index()
+    # capitalize column names
+    hist.columns = [x.capitalize() for x in hist.columns]
+    return hist
+
+
+def plot_graph(df, x, y, title, name):
+    """function to plot a line graph. Takes DataFrame, x and y axis, title and name as arguments and returns a Plotly figure"""
+    fig = px.line(df, x=x, y=y, template='simple_white',
+                  title='<b>{} {}</b>'.format(name, title))
+    fig.update_traces(line_color='#A27D4F')
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    return fig
+
+
+def peers_plot(df, name, metric):
+    """function to plot a bar chart with peers. Takes DataFrame, name, metric and ticker as arguments and returns a Plotly figure"""
+
+    # drop rows with missing metrics
+    df.dropna(subset=[metric], inplace=True)
+
+    df_sorted = df.sort_values(metric, ascending=False)
+
+    # iterate over the labels and add the colors to the color mapping dictionary, hightlight the selected ticker
+    color_map = {}
+    for label in df_sorted['Company Name']:
+        if label == name:
+            color_map[label] = '#A27D4F'
+        else:
+            color_map[label] = '#D9D9D9'
+
+    fig = px.bar(df_sorted, y='Company Name', x=metric, template='simple_white', color='Company Name',
+                 color_discrete_map=color_map,
+                 orientation='h',
+                 title='<b>{} {} vs Peers FY22</b>'.format(name, metric))
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, yaxis_title='')
+    return fig
