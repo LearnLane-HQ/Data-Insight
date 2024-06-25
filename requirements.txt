@@ -1,0 +1,19 @@
+streamlit>= 1.28
+streamlit_dynamic_filters
+streamlit-aggrid
+pandas
+python-pptx~=0.6.21
+openpyxl
+Pillow==9.3.0
+requests
+plotly
+yahooquery==2.3.3
+kaleido
+openai
+snowflake-connector-python
+langchain
+langchain-community
+langchain-core
+snowflake-snowpark-python
+pyarrow==10.0.1
+
