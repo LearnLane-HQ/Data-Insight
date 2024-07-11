@@ -26,7 +26,7 @@ import ast
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # set page layout and define basic variables
-st.set_page_config(layout="wide", page_icon='⚡', page_title="Instant Insight")
+st.set_page_config(layout="wide", page_icon='⚡', page_title="Data Insight")
 path = os.path.dirname(__file__)
 today = date.today()
 
